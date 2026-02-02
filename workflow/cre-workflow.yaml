@@ -1,0 +1,64 @@
+name: sentinel-cre-price-guard
+version: 1
+inputs:
+  token:
+    type: string
+    default: "ETH"
+  chainId:
+    type: number
+    default: 11155111
+  thresholdPct:
+    type: number
+    default: 1.0
+
+steps:
+  - id: read_onchain_price
+    type: chainlink.onchain.read
+    params:
+      chain: "ethereum"
+      chainId: "${inputs.chainId}"
+      contract: "${env.PRICE_ORACLE_ADDRESS}"
+      method: "latestAnswer"
+    outputs:
+      onchainPrice: "${result}"
+
+  - id: fetch_external_price
+    type: http.request
+    params:
+      method: "GET"
+      url: "https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd"
+    outputs:
+      externalPrice: "${result.ethereum.usd}"
+
+  - id: llm_risk_summary
+    type: chainlink.llm.call
+    params:
+      model: "gpt-4o-mini"
+      prompt: |
+        Compare on-chain price ${steps.read_onchain_price.outputs.onchainPrice}
+        with external price ${steps.fetch_external_price.outputs.externalPrice}.
+        Provide a short risk summary and whether the deviation exceeds ${inputs.thresholdPct}%.
+    outputs:
+      riskSummary: "${result.summary}"
+      exceedsThreshold: "${result.exceedsThreshold}"
+
+  - id: verdict
+    type: chainlink.compute
+    params:
+      expression: |
+        (Math.abs(steps.read_onchain_price.outputs.onchainPrice - steps.fetch_external_price.outputs.externalPrice)
+         / steps.fetch_external_price.outputs.externalPrice) * 100
+    outputs:
+      deviationPct: "${result}"
+
+  - id: write_verdict
+    type: chainlink.onchain.write
+    when: "${steps.llm_risk_summary.outputs.exceedsThreshold == true}"
+    params:
+      chain: "ethereum"
+      chainId: "${inputs.chainId}"
+      contract: "${env.PRICE_ORACLE_ADDRESS}"
+      method: "submitVerdict"
+      args:
+        - "${steps.verdict.outputs.deviationPct}"
+        - "${steps.llm_risk_summary.outputs.riskSummary}"
