@@ -2,11 +2,6 @@
 
 SentinelCRE is a new hackathon project that uses **Chainlink CRE** as the orchestration layer to verify on-chain pricing against external market data and an LLM-driven risk summary. The workflow integrates **Ethereum Sepolia** (blockchain), **CoinGecko** (external API), and a lightweight **LLM agent** to generate a compliance summary, then optionally writes a signed verdict back on-chain.
 
-## Why this meets the Top-3 requirements
-- **CRE Workflow as orchestration layer:** the entire pipeline is defined in a CRE workflow and mirrored in the runnable JS adapter.
-- **Blockchain + external system + LLM:** the workflow reads price data from Ethereum Sepolia, fetches CoinGecko price data, and uses an LLM agent to summarize risk.
-- **Simulation or deployment:** instructions include CRE CLI simulation and optional deployment to the CRE network.
-
 ## Architecture
 ```
 Ethereum (Sepolia) -> Chainlink CRE -> External API (CoinGecko)
@@ -63,4 +58,3 @@ cre deploy workflow/cre-workflow.yaml
 
 ## Notes
 - This project is newly created for the hackathon. It is not a resubmission of a prior entry.
-
