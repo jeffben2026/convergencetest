@@ -1,64 +1,70 @@
+# 功能：Chainlink CRE (Chainlink Risk Engine) 工作流定义文件。
+# 这个工作流旨在比较链上价格与外部市场数据，生成 LLM 驱动的风险摘要，并根据需要将判决写回链上。
+
 name: sentinel-cre-price-guard
 version: 1
+
+# 定义工作流的输入参数
 inputs:
-  token:
+  token: # 要监控的代币符号
     type: string
     default: "ETH"
-  chainId:
+  chainId: # 以太坊链的 ID (例如，Sepolia 测试网 ID 为 11155111)
     type: number
     default: 11155111
-  thresholdPct:
+  thresholdPct: # 价格偏差的阈值百分比，超过此阈值将触发警告
     type: number
     default: 1.0
 
+# 工作流的执行步骤
 steps:
-  - id: read_onchain_price
-    type: chainlink.onchain.read
+  - id: read_onchain_price # 步骤 ID：读取链上价格
+    type: chainlink.onchain.read # 步骤类型：从链上读取数据
     params:
-      chain: "ethereum"
-      chainId: "${inputs.chainId}"
-      contract: "${env.PRICE_ORACLE_ADDRESS}"
-      method: "latestAnswer"
+      chain: "ethereum" # 区块链类型：以太坊
+      chainId: "${inputs.chainId}" # 使用工作流输入中的 chainId
+      contract: "${env.PRICE_ORACLE_ADDRESS}" # 从环境变量获取价格预言机合约地址
+      method: "latestAnswer" # 调用合约的 latestAnswer 方法
     outputs:
-      onchainPrice: "${result}"
+      onchainPrice: "${result}" # 将方法返回的结果赋值给 onchainPrice 输出
 
-  - id: fetch_external_price
-    type: http.request
+  - id: fetch_external_price # 步骤 ID：获取外部价格
+    type: http.request # 步骤类型：发起 HTTP 请求
     params:
-      method: "GET"
-      url: "https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd"
+      method: "GET" # 请求方法：GET
+      url: "https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd" # CoinGecko API URL，获取以太坊的美元价格
     outputs:
-      externalPrice: "${result.ethereum.usd}"
+      externalPrice: "${result.ethereum.usd}" # 从 JSON 结果中提取以太坊的美元价格
 
-  - id: llm_risk_summary
-    type: chainlink.llm.call
+  - id: llm_risk_summary # 步骤 ID：LLM 风险摘要
+    type: chainlink.llm.call # 步骤类型：调用 Chainlink 的 LLM 服务
     params:
-      model: "gpt-4o-mini"
-      prompt: |
+      model: "gpt-4o-mini" # 使用的 LLM 模型
+      prompt: | # 传递给 LLM 的提示语，用于生成风险摘要
         Compare on-chain price ${steps.read_onchain_price.outputs.onchainPrice}
         with external price ${steps.fetch_external_price.outputs.externalPrice}.
         Provide a short risk summary and whether the deviation exceeds ${inputs.thresholdPct}%.
     outputs:
-      riskSummary: "${result.summary}"
-      exceedsThreshold: "${result.exceedsThreshold}"
+      riskSummary: "${result.summary}" # LLM 返回的风险摘要
+      exceedsThreshold: "${result.exceedsThreshold}" # LLM 返回的是否超出阈值的布尔值
 
-  - id: verdict
-    type: chainlink.compute
+  - id: verdict # 步骤 ID：计算判决
+    type: chainlink.compute # 步骤类型：执行计算
     params:
-      expression: |
+      expression: | # 计算表达式：计算链上价格和外部价格之间的偏差百分比
         (Math.abs(steps.read_onchain_price.outputs.onchainPrice - steps.fetch_external_price.outputs.externalPrice)
          / steps.fetch_external_price.outputs.externalPrice) * 100
     outputs:
-      deviationPct: "${result}"
+      deviationPct: "${result}" # 将计算结果赋值给 deviationPct 输出
 
-  - id: write_verdict
-    type: chainlink.onchain.write
-    when: "${steps.llm_risk_summary.outputs.exceedsThreshold == true}"
+  - id: write_verdict # 步骤 ID：写入判决
+    type: chainlink.onchain.write # 步骤类型：向链上写入数据
+    when: "${steps.llm_risk_summary.outputs.exceedsThreshold == true}" # 条件：仅当 LLM 判断超出阈值时才执行此步骤
     params:
-      chain: "ethereum"
-      chainId: "${inputs.chainId}"
-      contract: "${env.PRICE_ORACLE_ADDRESS}"
-      method: "submitVerdict"
-      args:
-        - "${steps.verdict.outputs.deviationPct}"
-        - "${steps.llm_risk_summary.outputs.riskSummary}"
+      chain: "ethereum" # 区块链类型：以太坊
+      chainId: "${inputs.chainId}" # 使用工作流输入中的 chainId
+      contract: "${env.PRICE_ORACLE_ADDRESS}" # 从环境变量获取价格预言机合约地址
+      method: "submitVerdict" # 调用合约的 submitVerdict 方法
+      args: # 传递给 submitVerdict 方法的参数
+        - "${steps.verdict.outputs.deviationPct}" # 偏差百分比
+        - "${steps.llm_risk_summary.outputs.riskSummary}" # 风险摘要
